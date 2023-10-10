@@ -6,14 +6,23 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"strconv"
 
 	"github.com/PuerkitoBio/goquery"
 )
 
+type Clue struct {
+	ID 				string
+	Value 			int
+	OrderNumber 	int
+	Text 			string
+	CorrectResponse string
+}
+
 // Round struct represents a round of the game
 type Round struct {
 	Categories []string
-	Clues      []string
+	Clues      []Clue
 }
 
 // GameData struct represents the game data including multiple rounds
@@ -59,8 +68,20 @@ func parseGameTableData(gameData string) GameData {
 
 		// Parse Clues for the round (adjust this part based on the actual HTML structure)
 		roundHtml.Find("td.clue").Each(func(index int, clueHtml *goquery.Selection) {
-			clueText := clueHtml.Text()
-			round.Clues = append(round.Clues, clueText)
+			var clue Clue
+
+			if id, exists := clueHtml.Attr("id"); exists && strings.HasPrefix(id, "clue_J") {
+				clue.ID = id
+			}
+
+			clue.Value, _ = strconv.Atoi(clueHtml.Find("td.clue_value").Text())
+			clue.OrderNumber, _ = strconv.Atoi(clueHtml.Find("td.clue_order_number").Text())
+
+			clue.Text = clueHtml.Find("td.clue_text").Text()
+
+			clue.CorrectResponse = clueHtml.Find("td.clue_text em.correct_response").Text()
+
+			round.Clues = append(round.Clues, clue)
 		})
 
 		// Append the current round to the game
@@ -79,7 +100,13 @@ func main() {
 	for roundIndex, round := range game.Rounds {
 		fmt.Printf("Round %d:\n", roundIndex+1)
 		fmt.Println("Categories:", round.Categories)
-		fmt.Println("Clues:", round.Clues)
+		fmt.Println("Clues:")
+		for _, clue := range round.Clues {
+			fmt.Println("---------------------------")
+			fmt.Printf("ID: %s\n Value: $%d\n Order Number %d\n Text: %s\n Correct Response: %s\n", 
+			clue.ID, clue.Value, clue.OrderNumber, clue.Text, clue.CorrectResponse)
+			fmt.Println("---------------------------")
+		}
 		fmt.Println("---------------------------")
 	}
 }

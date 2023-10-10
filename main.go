@@ -4,16 +4,29 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"strings"
 	"net/http"
+	"strings"
+
 	"github.com/PuerkitoBio/goquery"
- )
+)
+
+// Round struct represents a round of the game
+type Round struct {
+	Categories []string
+	Clues      []string
+}
+
+// GameData struct represents the game data including multiple rounds
+type GameData struct {
+	Rounds []Round
+}
 
 func requestGameData(gameId int) string {
-	resp, err := http.Get(fmt.Sprintf("https://j-archive.com/showgame.php?game_id=%d", gameId))
+	url := fmt.Sprintf("https://j-archive.com/showgame.php?game_id=%d", gameId)
+	resp, err := http.Get(url)
 
 	if err != nil {
-   		log.Fatalln(err)
+		log.Fatalln(err)
 	}
 
 	body, err := ioutil.ReadAll(resp.Body)
@@ -23,12 +36,10 @@ func requestGameData(gameId int) string {
 	gameData := string(body)
 
 	return gameData
-
 }
 
-func parseGameTableData(gameData string) {
-	var row []string
-	var rows [][]string
+func parseGameTableData(gameData string) GameData {
+	var game GameData
 
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(gameData))
 	if err != nil {
@@ -36,21 +47,39 @@ func parseGameTableData(gameData string) {
 		log.Fatal(err)
 	}
 
-	//Find each table: https://gist.github.com/salmoni/27aee5bb0d26536391aabe7f13a72494
-	doc.Find("table").Each(func(index int, tablehtml *goquery.Selection) {
-		tablehtml.Find("tr").Each(func(indextr int, rowhtml *goquery.Selection) {
-			rowhtml.Find("td").Each(func(indextd int, tablecell *goquery.Selection) {
-				row = append(row, tablecell.Text())
-			})
-			rows = append(rows, row)
-			row = nil
+	// Find each round table
+	doc.Find("table.round").Each(func(roundIndex int, roundHtml *goquery.Selection) {
+		var round Round
+
+		// Parse Categories for the round
+		roundHtml.Find("td.category").Each(func(index int, categoryHtml *goquery.Selection) {
+			categoryName := categoryHtml.Find("td.category_name").Text()
+			round.Categories = append(round.Categories, categoryName)
 		})
+
+		// Parse Clues for the round (adjust this part based on the actual HTML structure)
+		roundHtml.Find("td.clue").Each(func(index int, clueHtml *goquery.Selection) {
+			clueText := clueHtml.Text()
+			round.Clues = append(round.Clues, clueText)
+		})
+
+		// Append the current round to the game
+		game.Rounds = append(game.Rounds, round)
 	})
-	fmt.Println(" rows = ", len(rows), rows)
+
+	return game
 }
 
 func main() {
 	var gameId int = 7074
 	gameData := requestGameData(gameId)
-	parseGameTableData(gameData)
+	game := parseGameTableData(gameData)
+
+	// Print the Categories and Clues for each round
+	for roundIndex, round := range game.Rounds {
+		fmt.Printf("Round %d:\n", roundIndex+1)
+		fmt.Println("Categories:", round.Categories)
+		fmt.Println("Clues:", round.Clues)
+		fmt.Println("---------------------------")
+	}
 }

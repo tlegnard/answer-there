@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"strconv"
 
@@ -12,7 +13,7 @@ import (
 )
 
 type Clue struct {
-	ID 				string
+	Position		string
 	Value 			string
 	OrderNumber 	int
 	Text 			string
@@ -47,6 +48,19 @@ func requestGameData(gameId int) string {
 	return gameData
 }
 
+func extractCluePosition(clueHTMLText string) (string, error) {
+	// Define a regular expression pattern for the ID
+	re := regexp.MustCompile(`(clue_)((J|DJ)_(\d+_\d+))`)
+
+	// Find the first match in the HTML text
+	matches := re.FindStringSubmatch(clueHTMLText)
+	if len(matches) > 0 {
+		return matches[2], nil
+	}
+
+	return "", nil
+}
+
 func parseGameTableData(gameData string) GameData {
 	var game GameData
 
@@ -69,11 +83,14 @@ func parseGameTableData(gameData string) GameData {
 		// Parse Clues for the round (adjust this part based on the actual HTML structure)
 		roundHtml.Find("td.clue").Each(func(index int, clueHtml *goquery.Selection) {
 			var clue Clue
-
-			if id, exists := clueHtml.Attr("id"); exists && strings.HasPrefix(id, "clue_J") {
-				clue.ID = id
+			clueHTMLText,_ := clueHtml.Html()
+			position, err := extractCluePosition(clueHTMLText)
+			if err != nil {
+				log.Println("Error extracting clue information:", err)
+				return
 			}
 
+			clue.Position = position
 			clue.Value = clueHtml.Find("td.clue_value").Text()
 			clue.OrderNumber, _ = strconv.Atoi(clueHtml.Find("td.clue_order_number").Text())
 
@@ -103,8 +120,8 @@ func main() {
 		fmt.Println("Clues:")
 		for _, clue := range round.Clues {
 			fmt.Println("---------------------------")
-			fmt.Printf("ID: %s\n Value: %s\n Order Number %d\n Text: %s\n Correct Response: %s\n", 
-			clue.ID, clue.Value, clue.OrderNumber, clue.Text, clue.CorrectResponse)
+			fmt.Printf("BoardPosition: %s\n Value: %s\n Order Number %d\n Text: %s\n Correct Response: %s\n", 
+			clue.Position, clue.Value, clue.OrderNumber, clue.Text, clue.CorrectResponse)
 			fmt.Println("---------------------------")
 		}
 		fmt.Println("---------------------------")

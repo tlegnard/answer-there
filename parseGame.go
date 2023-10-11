@@ -13,7 +13,7 @@ import (
 
 type Clue struct {
 	ID 				string
-	Value 			int
+	Value 			string
 	OrderNumber 	int
 	Text 			string
 	CorrectResponse string
@@ -74,7 +74,7 @@ func parseGameTableData(gameData string) GameData {
 				clue.ID = id
 			}
 
-			clue.Value, _ = strconv.Atoi(clueHtml.Find("td.clue_value").Text())
+			clue.Value = clueHtml.Find("td.clue_value").Text()
 			clue.OrderNumber, _ = strconv.Atoi(clueHtml.Find("td.clue_order_number").Text())
 
 			clue.Text = clueHtml.Find("td.clue_text").Text()
@@ -103,7 +103,7 @@ func main() {
 		fmt.Println("Clues:")
 		for _, clue := range round.Clues {
 			fmt.Println("---------------------------")
-			fmt.Printf("ID: %s\n Value: $%d\n Order Number %d\n Text: %s\n Correct Response: %s\n", 
+			fmt.Printf("ID: %s\n Value: %s\n Order Number %d\n Text: %s\n Correct Response: %s\n", 
 			clue.ID, clue.Value, clue.OrderNumber, clue.Text, clue.CorrectResponse)
 			fmt.Println("---------------------------")
 		}

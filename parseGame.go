@@ -1,5 +1,8 @@
 package main
-
+//update Round to have Round name: J/Jeopardy! Round DJ/Double Jeopardy! Round
+//Add final jeopardy round,
+//Add contesetants
+//Add contesetand correct answer or triple stumper to clue.
 import (
 	"fmt"
 	"io/ioutil"
@@ -94,14 +97,13 @@ func parseGameTableData(gameData string) GameData {
 			clue.Value = clueHtml.Find("td.clue_value").Text()
 			clue.OrderNumber, _ = strconv.Atoi(clueHtml.Find("td.clue_order_number").Text())
 
-			clue.Text = clueHtml.Find("td.clue_text").Text()
+			clue.Text = clueHtml.Find("td.clue_text").First().Text()
 
 			clue.CorrectResponse = clueHtml.Find("td.clue_text em.correct_response").Text()
 
 			round.Clues = append(round.Clues, clue)
 		})
 
-		// Append the current round to the game
 		game.Rounds = append(game.Rounds, round)
 	})
 

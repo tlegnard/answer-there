@@ -1,25 +1,25 @@
 package main
+
 //update Round to have Round name: J/Jeopardy! Round DJ/Double Jeopardy! Round
 //Add final jeopardy round,
-//Add contesetants
-//Add contesetand correct answer or triple stumper to clue.
+//Add contestant and correct answer or triple stumper to clue.
 import (
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"regexp"
-	"strings"
 	"strconv"
+	"strings"
 
 	"github.com/PuerkitoBio/goquery"
 )
 
 type Clue struct {
-	Position		string
-	Value 			string
-	OrderNumber 	int
-	Text 			string
+	Position        string
+	Value           string
+	OrderNumber     int
+	Text            string
 	CorrectResponse string
 }
 
@@ -31,7 +31,15 @@ type Round struct {
 
 // GameData struct represents the game data including multiple rounds
 type GameData struct {
-	Rounds []Round
+	Rounds      []Round
+	Contestants []Contestant
+}
+
+type Contestant struct {
+	PlayerID string
+	Name     string
+	Nickname string
+	Bio      string
 }
 
 func requestGameData(gameId int) string {
@@ -64,6 +72,17 @@ func extractCluePosition(clueHTMLText string) (string, error) {
 	return "", nil
 }
 
+func extractPlayerId(contestantHTML string) (string, error) {
+	re := regexp.MustCompile(`(player_id=)(\d+)`)
+	matches := re.FindStringSubmatch(contestantHTML)
+	if len(matches) > 0 {
+		return matches[2], nil
+	}
+
+	return "", nil
+
+}
+
 func parseGameTableData(gameData string) GameData {
 	var game GameData
 
@@ -72,6 +91,30 @@ func parseGameTableData(gameData string) GameData {
 		fmt.Println("no url found")
 		log.Fatal(err)
 	}
+
+	// Find contestant table
+	doc.Find("#contestants_table").Each(func(contestantIndex int, contestantTable *goquery.Selection) {
+		contestantTable.Find("p.contestants").Each(func(i int, contestantHtml *goquery.Selection) {
+			var contestant Contestant
+			var htmlText string
+			htmlText, _ = contestantHtml.Html()
+
+			contestant.Name = contestantHtml.Find("a").Text()
+			contestant.PlayerID, _ = extractPlayerId(htmlText)
+
+			// Filter out text matching contestant.Name
+			contestantHtml.Contents().Each(func(j int, content *goquery.Selection) {
+
+				text := content.Text()
+				if !strings.Contains(text, contestant.Name) {
+					// Append non-matching text to player bio
+					contestant.Bio += strings.TrimPrefix(text, ", ")
+				}
+			})
+			game.Contestants = append(game.Contestants, contestant)
+		})
+
+	})
 
 	// Find each round table
 	doc.Find("table.round").Each(func(roundIndex int, roundHtml *goquery.Selection) {
@@ -86,7 +129,7 @@ func parseGameTableData(gameData string) GameData {
 		// Parse Clues for the round (adjust this part based on the actual HTML structure)
 		roundHtml.Find("td.clue").Each(func(index int, clueHtml *goquery.Selection) {
 			var clue Clue
-			clueHTMLText,_ := clueHtml.Html()
+			clueHTMLText, _ := clueHtml.Html()
 			position, err := extractCluePosition(clueHTMLText)
 			if err != nil {
 				log.Println("Error extracting clue information:", err)
@@ -114,6 +157,7 @@ func main() {
 	var gameId int = 7074
 	gameData := requestGameData(gameId)
 	game := parseGameTableData(gameData)
+	fmt.Println("Contestants:", game.Contestants)
 
 	// Print the Categories and Clues for each round
 	for roundIndex, round := range game.Rounds {
@@ -122,8 +166,8 @@ func main() {
 		fmt.Println("Clues:")
 		for _, clue := range round.Clues {
 			fmt.Println("---------------------------")
-			fmt.Printf("BoardPosition: %s\n Value: %s\n Order Number %d\n Text: %s\n Correct Response: %s\n", 
-			clue.Position, clue.Value, clue.OrderNumber, clue.Text, clue.CorrectResponse)
+			fmt.Printf("BoardPosition: %s\n Value: %s\n Order Number %d\n Text: %s\n Correct Response: %s\n",
+				clue.Position, clue.Value, clue.OrderNumber, clue.Text, clue.CorrectResponse)
 			fmt.Println("---------------------------")
 		}
 		fmt.Println("---------------------------")

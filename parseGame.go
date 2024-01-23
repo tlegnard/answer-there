@@ -1,7 +1,6 @@
 package main
 
 //update Round to have Round name: J/Jeopardy! Round DJ/Double Jeopardy! Round
-//Add final jeopardy round,
 //Add contestant and correct answer or triple stumper to clue.
 import (
 	"fmt"
@@ -117,7 +116,9 @@ func parseGameTableData(gameData string) GameData {
 	})
 
 	// Find each round table
-	doc.Find("table.round").Each(func(roundIndex int, roundHtml *goquery.Selection) {
+	doc.Find("table").FilterFunction(func(_ int, tableHtml *goquery.Selection) bool {
+		return tableHtml.HasClass("round") || tableHtml.HasClass("final_round")
+	}).Each(func(roundIndex int, roundHtml *goquery.Selection) {
 		var round Round
 
 		// Parse Categories for the round

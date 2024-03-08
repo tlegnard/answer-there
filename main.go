@@ -4,9 +4,7 @@ package main
 //Add contestant and correct answer or triple stumper to clue.
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
-	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -39,23 +37,6 @@ type Contestant struct {
 	Name     string
 	Nickname string
 	Bio      string
-}
-
-func requestGameData(gameId int) string {
-	url := fmt.Sprintf("https://j-archive.com/showgame.php?game_id=%d", gameId)
-	resp, err := http.Get(url)
-
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	gameData := string(body)
-
-	return gameData
 }
 
 func extractCluePosition(clueHTMLText string) (string, error) {
@@ -155,8 +136,9 @@ func parseGameTableData(gameData string) GameData {
 }
 
 func main() {
+	// seasonData := RequestSeason("https://j-archive.com/showseason.php?season=40")
 	var gameId int = 7074
-	gameData := requestGameData(gameId)
+	gameData := RequestGameData(gameId)
 	game := parseGameTableData(gameData)
 	fmt.Println("Contestants:", game.Contestants)
 
@@ -173,4 +155,6 @@ func main() {
 		}
 		fmt.Println("---------------------------")
 	}
+
+	// fmt.Println(seasonData)
 }

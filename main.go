@@ -174,16 +174,16 @@ func main() {
 	fmt.Println("Processing Data for the following games in Season "+seasonID+": ", seasonGameList)
 
 	for _, gameID := range seasonGameList {
-		var game GameData
-		gameData := RequestGameData(game.ID)
-		game = parseGameTableData(gameData)
+		gameData := RequestGameData(gameID)
+		var game GameData = parseGameTableData(gameData)
 		game.ID = gameID
 		seasonData.Games = append(seasonData.Games, game)
 	}
 
-	var gameId int = seasonData.Games[len(seasonData.Games)-1].ID
-	gameData := RequestGameData(gameId)
-	sampleGame := parseGameTableData(gameData)
+	sampleGame := seasonData.Games[len(seasonData.Games)-1]
+
+	fmt.Println("# of games to parse: ", len(seasonGameList))
+	fmt.Println("# of games parsed: ", len(seasonData.Games))
 
 	fmt.Println("Contestants:", sampleGame.Contestants)
 	// Print the Categories and Clues for each round

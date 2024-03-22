@@ -26,17 +26,22 @@ type Round struct {
 	Clues      []Clue
 }
 
-// GameData struct represents the game data including multiple rounds
-type GameData struct {
-	Rounds      []Round
-	Contestants []Contestant
-}
-
 type Contestant struct {
 	PlayerID string
 	Name     string
 	Nickname string
 	Bio      string
+}
+
+// GameData struct represents the game data including multiple rounds
+type GameData struct {
+	ID          int
+	Rounds      []Round
+	Contestants []Contestant
+}
+
+type SeasonData struct {
+	Games []GameData
 }
 
 func extractCluePosition(clueHTMLText string) (string, error) {
@@ -52,9 +57,9 @@ func extractCluePosition(clueHTMLText string) (string, error) {
 	return "", nil
 }
 
-func extractPlayerId(contestantHTML string) (string, error) {
-	re := regexp.MustCompile(`(player_id=)(\d+)`)
-	matches := re.FindStringSubmatch(contestantHTML)
+func extractId(textHTML string, match_string string) (string, error) {
+	re := regexp.MustCompile("(" + match_string + "=)(\\d+)")
+	matches := re.FindStringSubmatch(textHTML)
 	if len(matches) > 0 {
 		return matches[2], nil
 	}
@@ -63,14 +68,19 @@ func extractPlayerId(contestantHTML string) (string, error) {
 
 }
 
-func parseGameTableData(gameData string) GameData {
-	var game GameData
-
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(gameData))
+func parseDoc(Data string) *goquery.Document {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(Data))
 	if err != nil {
 		fmt.Println("no url found")
 		log.Fatal(err)
 	}
+	return doc
+}
+
+func parseGameTableData(gameData string) GameData {
+	var game GameData
+
+	doc := parseDoc(gameData)
 
 	// Find contestant table
 	doc.Find("#contestants_table").Each(func(contestantIndex int, contestantTable *goquery.Selection) {
@@ -80,7 +90,7 @@ func parseGameTableData(gameData string) GameData {
 			htmlText, _ = contestantHtml.Html()
 
 			contestant.Name = contestantHtml.Find("a").Text()
-			contestant.PlayerID, _ = extractPlayerId(htmlText)
+			contestant.PlayerID, _ = extractId(htmlText, "player_id")
 
 			// Filter out text matching contestant.Name
 			contestantHtml.Contents().Each(func(j int, content *goquery.Selection) {
@@ -135,15 +145,49 @@ func parseGameTableData(gameData string) GameData {
 	return game
 }
 
-func main() {
-	// seasonData := RequestSeason("https://j-archive.com/showseason.php?season=40")
-	var gameId int = 7074
-	gameData := RequestGameData(gameId)
-	game := parseGameTableData(gameData)
-	fmt.Println("Contestants:", game.Contestants)
+func GetSeasonGameList(seasonData string) []int {
+	var seasonList []int
 
+	doc := parseDoc(seasonData)
+
+	doc.Find("a[href*='showgame.php?game_id=']").Each(func(i int, s *goquery.Selection) {
+		href, exists := s.Attr("href")
+		if exists {
+			gameIDtext, _ := extractId(href, "game_id")
+			gameID, err := strconv.Atoi(gameIDtext)
+			if err != nil {
+				panic(err)
+			}
+			seasonList = append(seasonList, gameID)
+		}
+	})
+
+	return seasonList
+}
+
+func main() {
+	seasonID := "40"
+	seasonHTML := RequestSeason("https://j-archive.com/showseason.php?season=" + seasonID)
+	seasonGameList := GetSeasonGameList(seasonHTML)
+	var seasonData SeasonData
+
+	fmt.Println("Processing Data for the following games in Season "+seasonID+": ", seasonGameList)
+
+	for _, gameID := range seasonGameList {
+		var game GameData
+		gameData := RequestGameData(game.ID)
+		game = parseGameTableData(gameData)
+		game.ID = gameID
+		seasonData.Games = append(seasonData.Games, game)
+	}
+
+	var gameId int = seasonData.Games[len(seasonData.Games)-1].ID
+	gameData := RequestGameData(gameId)
+	sampleGame := parseGameTableData(gameData)
+
+	fmt.Println("Contestants:", sampleGame.Contestants)
 	// Print the Categories and Clues for each round
-	for roundIndex, round := range game.Rounds {
+	for roundIndex, round := range sampleGame.Rounds {
 		fmt.Printf("Round %d:\n", roundIndex+1)
 		fmt.Println("Categories:", round.Categories)
 		fmt.Println("Clues:")
@@ -155,6 +199,4 @@ func main() {
 		}
 		fmt.Println("---------------------------")
 	}
-
-	// fmt.Println(seasonData)
 }

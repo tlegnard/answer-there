@@ -1,7 +1,6 @@
 package main
 
-//update Round to have Round name: J/Jeopardy! Round DJ/Double Jeopardy! Round
-//Add contestant and correct answer or triple stumper to clue.
+//TODO : Add contestant, incorrect response, and triple stumper to clue.
 import (
 	"fmt"
 	"log"
@@ -22,6 +21,7 @@ type Clue struct {
 
 // Round struct represents a round of the game
 type Round struct {
+	Name       string
 	Categories []string
 	Clues      []Clue
 }
@@ -112,13 +112,19 @@ func parseGameTableData(gameData string) GameData {
 	}).Each(func(roundIndex int, roundHtml *goquery.Selection) {
 		var round Round
 
-		// Parse Categories for the round
+		if roundHtml.HasClass("final_round") {
+			round.Name = "Final Jeopardy"
+		} else if roundIndex == 0 {
+			round.Name = "Jeopardy! Round"
+		} else if roundIndex == 1 {
+			round.Name = "Double Jeopardy! Round"
+		}
 		roundHtml.Find("td.category").Each(func(index int, categoryHtml *goquery.Selection) {
 			categoryName := categoryHtml.Find("td.category_name").Text()
 			round.Categories = append(round.Categories, categoryName)
 		})
 
-		// Parse Clues for the round (adjust this part based on the actual HTML structure)
+		// Parse Clues for the round
 		roundHtml.Find("td.clue").Each(func(index int, clueHtml *goquery.Selection) {
 			var clue Clue
 			clueHTMLText, _ := clueHtml.Html()
@@ -187,8 +193,8 @@ func main() {
 
 	fmt.Println("Contestants:", sampleGame.Contestants)
 	// Print the Categories and Clues for each round
-	for roundIndex, round := range sampleGame.Rounds {
-		fmt.Printf("Round %d:\n", roundIndex+1)
+	for _, round := range sampleGame.Rounds {
+		fmt.Println(round.Name)
 		fmt.Println("Categories:", round.Categories)
 		fmt.Println("Clues:")
 		for _, clue := range round.Clues {

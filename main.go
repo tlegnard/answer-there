@@ -2,8 +2,10 @@ package main
 
 //TODO : Add contestant, incorrect response, and triple stumper to clue.
 import (
+	"encoding/csv"
 	"fmt"
 	"log"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -17,6 +19,8 @@ type Clue struct {
 	OrderNumber     int
 	Text            string
 	CorrectResponse string
+	// GameID          int
+	// RoundName       int
 }
 
 // Round struct represents a round of the game
@@ -24,6 +28,7 @@ type Round struct {
 	Name       string
 	Categories []string
 	Clues      []Clue
+	// GameID     int
 }
 
 type Contestant struct {
@@ -171,6 +176,43 @@ func GetSeasonGameList(seasonData string) []int {
 	return seasonList
 }
 
+func writeCluesToCSV(filePath string, seasonID string, game GameData) {
+	file, err := os.Create(filePath)
+	if err != nil {
+		log.Fatalf("Failed to creat CSV file: %v", err)
+	}
+	defer file.Close()
+
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+
+	headers := []string{"SeasonID", "GameId", "RoundName", "Category", "Position", "Value", "OrderNumber", "Text", "CorrectResponse"}
+	if err := writer.Write(headers); err != nil {
+		log.Fatalf("Failed to write headers to CSV file: %v", err)
+	}
+
+	for _, round := range game.Rounds {
+		for _, category := range round.Categories {
+			for _, clue := range round.Clues {
+				record := []string{
+					seasonID,
+					strconv.Itoa(game.ID),
+					round.Name,
+					category,
+					clue.Position,
+					clue.Value,
+					strconv.Itoa(clue.OrderNumber),
+					clue.Text,
+					clue.CorrectResponse,
+				}
+				if err := writer.Write(record); err != nil {
+					log.Fatalf("FaILED TO WRITE RECORD TO CSV FILE: %v", err)
+				}
+			}
+		}
+	}
+}
+
 func main() {
 	seasonID := "40"
 	seasonHTML := RequestSeason("https://j-archive.com/showseason.php?season=" + seasonID)
@@ -184,25 +226,29 @@ func main() {
 		var game GameData = parseGameTableData(gameData)
 		game.ID = gameID
 		seasonData.Games = append(seasonData.Games, game)
+		filePath := fmt.Sprintf("games/game_%d_clues.csv", gameID)
+		// TODO: fix data modleing issue putting duplicate clues for each category in each round
+		writeCluesToCSV(filePath, seasonID, game)
 	}
 
-	sampleGame := seasonData.Games[len(seasonData.Games)-1]
+	// sampleGame := seasonData.Games[len(seasonData.Games)-1]
 
 	fmt.Println("# of games to parse: ", len(seasonGameList))
 	fmt.Println("# of games parsed: ", len(seasonData.Games))
+	// fmt.Println("Game ID: ", sampleGame.ID)
+	// fmt.Println("Contestants:", sampleGame.Contestants)
+	// // Print the Categories and Clues for each round
+	// for _, round := range sampleGame.Rounds {
+	// 	fmt.Println(round.Name)
+	// 	fmt.Println("Categories:", round.Categories)
+	// 	fmt.Println("Clues:")
+	// 	for _, clue := range round.Clues {
+	// 		fmt.Println("---------------------------")
+	// 		fmt.Printf("BoardPosition: %s\n Value: %s\n Order Number %d\n Text: %s\n Correct Response: %s\n",
+	// 			clue.Position, clue.Value, clue.OrderNumber, clue.Text, clue.CorrectResponse)
+	// 		fmt.Println("---------------------------")
+	// 	}
+	// 	fmt.Println("---------------------------")
+	// }
 
-	fmt.Println("Contestants:", sampleGame.Contestants)
-	// Print the Categories and Clues for each round
-	for _, round := range sampleGame.Rounds {
-		fmt.Println(round.Name)
-		fmt.Println("Categories:", round.Categories)
-		fmt.Println("Clues:")
-		for _, clue := range round.Clues {
-			fmt.Println("---------------------------")
-			fmt.Printf("BoardPosition: %s\n Value: %s\n Order Number %d\n Text: %s\n Correct Response: %s\n",
-				clue.Position, clue.Value, clue.OrderNumber, clue.Text, clue.CorrectResponse)
-			fmt.Println("---------------------------")
-		}
-		fmt.Println("---------------------------")
-	}
 }

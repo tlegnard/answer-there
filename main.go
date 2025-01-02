@@ -179,7 +179,7 @@ func GetSeasonGameList(seasonData string) []int {
 func writeCluesToCSV(filePath string, seasonID string, game GameData) {
 	file, err := os.Create(filePath)
 	if err != nil {
-		log.Fatalf("Failed to creat CSV file: %v", err)
+		log.Fatalf("Failed to create CSV file: %v", err)
 	}
 	defer file.Close()
 
@@ -192,22 +192,30 @@ func writeCluesToCSV(filePath string, seasonID string, game GameData) {
 	}
 
 	for _, round := range game.Rounds {
-		for _, category := range round.Categories {
-			for _, clue := range round.Clues {
-				record := []string{
-					seasonID,
-					strconv.Itoa(game.ID),
-					round.Name,
-					category,
-					clue.Position,
-					clue.Value,
-					strconv.Itoa(clue.OrderNumber),
-					clue.Text,
-					clue.CorrectResponse,
-				}
-				if err := writer.Write(record); err != nil {
-					log.Fatalf("FaILED TO WRITE RECORD TO CSV FILE: %v", err)
-				}
+		numCategories := len(round.Categories)
+		if numCategories == 0 {
+			log.Println("No categories found for round:", round.Name)
+			continue
+		}
+
+		// Iterate through the clues and assign them to the proper category
+		for clueIndex, clue := range round.Clues {
+			categoryIndex := clueIndex % numCategories // Assign clue to the correct category (column-wise)
+			category := round.Categories[categoryIndex]
+
+			record := []string{
+				seasonID,
+				strconv.Itoa(game.ID),
+				round.Name,
+				category,
+				clue.Position,
+				clue.Value,
+				strconv.Itoa(clue.OrderNumber),
+				clue.Text,
+				clue.CorrectResponse,
+			}
+			if err := writer.Write(record); err != nil {
+				log.Fatalf("Failed to write record to CSV file: %v", err)
 			}
 		}
 	}
@@ -227,7 +235,6 @@ func main() {
 		game.ID = gameID
 		seasonData.Games = append(seasonData.Games, game)
 		filePath := fmt.Sprintf("games/game_%d_clues.csv", gameID)
-		// TODO: fix data modleing issue putting duplicate clues for each category in each round
 		writeCluesToCSV(filePath, seasonID, game)
 	}
 

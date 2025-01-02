@@ -2,15 +2,19 @@ package main
 
 //TODO : Add contestant, incorrect response, and triple stumper to clue.
 import (
+	"database/sql"
 	"encoding/csv"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	_ "github.com/mattn/go-sqlite3" // SQLite driver
 )
 
 type Clue struct {
@@ -46,6 +50,7 @@ type GameData struct {
 }
 
 type SeasonData struct {
+	ID    string // Season ID, e.g., "40"
 	Games []GameData
 }
 
@@ -176,7 +181,7 @@ func GetSeasonGameList(seasonData string) []int {
 	return seasonList
 }
 
-func writeCluesToCSV(filePath string, seasonID string, game GameData) {
+func writeCluesToCSV(filePath string, season SeasonData) {
 	file, err := os.Create(filePath)
 	if err != nil {
 		log.Fatalf("Failed to create CSV file: %v", err)
@@ -191,42 +196,268 @@ func writeCluesToCSV(filePath string, seasonID string, game GameData) {
 		log.Fatalf("Failed to write headers to CSV file: %v", err)
 	}
 
-	for _, round := range game.Rounds {
-		numCategories := len(round.Categories)
-		if numCategories == 0 {
-			log.Println("No categories found for round:", round.Name)
-			continue
-		}
-
-		// Iterate through the clues and assign them to the proper category
-		for clueIndex, clue := range round.Clues {
-			categoryIndex := clueIndex % numCategories // Assign clue to the correct category (column-wise)
-			category := round.Categories[categoryIndex]
-
-			record := []string{
-				seasonID,
-				strconv.Itoa(game.ID),
-				round.Name,
-				category,
-				clue.Position,
-				clue.Value,
-				strconv.Itoa(clue.OrderNumber),
-				clue.Text,
-				clue.CorrectResponse,
+	for _, game := range season.Games {
+		for _, round := range game.Rounds {
+			numCategories := len(round.Categories)
+			if numCategories == 0 {
+				log.Println("No categories found for round:", round.Name)
+				continue
 			}
-			if err := writer.Write(record); err != nil {
-				log.Fatalf("Failed to write record to CSV file: %v", err)
+
+			for clueIndex, clue := range round.Clues {
+				categoryIndex := clueIndex % numCategories // Assign clue to the correct category
+				category := round.Categories[categoryIndex]
+
+				record := []string{
+					season.ID,
+					strconv.Itoa(game.ID),
+					round.Name,
+					category,
+					clue.Position,
+					clue.Value,
+					strconv.Itoa(clue.OrderNumber),
+					clue.Text,
+					clue.CorrectResponse,
+				}
+				if err := writer.Write(record); err != nil {
+					log.Fatalf("Failed to write record to CSV file: %v", err)
+				}
 			}
 		}
 	}
+
+	log.Println("Successfully wrote clues to CSV")
+}
+
+func writeGameList(dbName string, season SeasonData) {
+	db, err := sql.Open("sqlite3", dbName)
+	if err != nil {
+		log.Fatalf("Failed to open SQLite database: %v", err)
+	}
+	defer db.Close()
+
+	// Create the `gamelist` table if it doesn't exist
+	createGameListTableSQL := `
+		ATTACH DATABASE ? AS game_data;
+		CREATE TABLE IF NOT EXISTS game_data.gamelist (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			season_id TEXT NOT NULL,
+			game_id INTEGER NOT NULL UNIQUE
+		);
+	`
+	if _, err := db.Exec(createGameListTableSQL, dbName); err != nil {
+		log.Fatalf("Failed to create gamelist table: %v", err)
+	}
+
+	// Insert games into the `gamelist` table
+	insertGameSQL := `
+		INSERT OR IGNORE INTO game_data.gamelist (
+			season_id, game_id
+		) VALUES (?, ?);
+	`
+
+	for _, game := range season.Games {
+		_, err := db.Exec(
+			insertGameSQL,
+			season.ID,
+			game.ID,
+		)
+		if err != nil {
+			log.Fatalf("Failed to insert game into gamelist table: %v", err)
+		}
+	}
+
+	log.Println("Successfully wrote gamelist data to SQLite database")
+}
+
+func writeClues(dbName string, season SeasonData) {
+	db, err := sql.Open("sqlite3", dbName)
+	if err != nil {
+		log.Fatalf("Failed to open SQLite database: %v", err)
+	}
+	defer db.Close()
+
+	// Create the schema and table if it doesn't exist
+	createSchemaSQL := `
+		ATTACH DATABASE ? AS game_data;
+		CREATE TABLE IF NOT EXISTS game_data.clues (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			season_id TEXT NOT NULL,
+			game_id INTEGER NOT NULL,
+			round_name TEXT NOT NULL,
+			category TEXT NOT NULL,
+			position TEXT,
+			value TEXT,
+			order_number INTEGER,
+			text TEXT NOT NULL,
+			correct_response TEXT
+		);
+	`
+	if _, err := db.Exec(createSchemaSQL, dbName); err != nil {
+		log.Fatalf("Failed to create schema or table: %v", err)
+	}
+
+	// Insert clues into the table
+	insertClueSQL := `
+		INSERT INTO game_data.clues (
+			season_id, game_id, round_name, category, position, value, order_number, text, correct_response
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+	`
+
+	for _, game := range season.Games {
+		for _, round := range game.Rounds {
+			numCategories := len(round.Categories)
+			if numCategories == 0 {
+				log.Println("No categories found for round:", round.Name)
+				continue
+			}
+
+			for clueIndex, clue := range round.Clues {
+				categoryIndex := clueIndex % numCategories // Assign clue to the correct category
+				category := round.Categories[categoryIndex]
+
+				_, err := db.Exec(
+					insertClueSQL,
+					season.ID,
+					game.ID,
+					round.Name,
+					category,
+					clue.Position,
+					clue.Value,
+					clue.OrderNumber,
+					clue.Text,
+					clue.CorrectResponse,
+				)
+				if err != nil {
+					log.Fatalf("Failed to insert clue into database: %v", err)
+				}
+			}
+		}
+	}
+
+	log.Println("Successfully wrote clues to SQLite database")
+}
+
+func writeContestants(dbName string, season SeasonData) {
+	db, err := sql.Open("sqlite3", dbName)
+	if err != nil {
+		log.Fatalf("Failed to open SQLite database: %v", err)
+	}
+	defer db.Close()
+
+	// Create the `contestants` table if it doesn't exist
+	createContestantsTableSQL := `
+		ATTACH DATABASE ? AS game_data;
+		CREATE TABLE IF NOT EXISTS game_data.contestants (
+			player_id TEXT NOT NULL,
+			season_id TEXT NOT NULL,
+			game_id INTEGER NOT NULL,
+			name TEXT NOT NULL,
+			nickname TEXT,
+			bio TEXT
+		);
+	`
+	if _, err := db.Exec(createContestantsTableSQL, dbName); err != nil {
+		log.Fatalf("Failed to create contestants table: %v", err)
+	}
+
+	// Insert contestants into the `contestants` table
+	insertContestantSQL := `
+		INSERT OR IGNORE INTO game_data.contestants (
+			player_id, season_id, game_id, name, nickname, bio
+		) VALUES (?, ?, ?, ?, ?, ?);
+	`
+
+	for _, game := range season.Games {
+		for _, contestant := range game.Contestants {
+			_, err := db.Exec(
+				insertContestantSQL,
+				contestant.PlayerID,
+				season.ID,
+				game.ID,
+				contestant.Name,
+				contestant.Nickname,
+				contestant.Bio,
+			)
+			if err != nil {
+				log.Fatalf("Failed to insert contestant into contestants table: %v", err)
+			}
+		}
+	}
+
+	log.Println("Successfully wrote contestants data to SQLite database")
+}
+
+func generateRandomString(n int) string {
+	const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	rand.Seed(time.Now().UnixNano())
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = letters[rand.Intn(len(letters))]
+	}
+	return string(b)
+}
+
+func writeCategories(dbName string, season SeasonData) {
+	db, err := sql.Open("sqlite3", dbName)
+	if err != nil {
+		log.Fatalf("Failed to open SQLite database: %v", err)
+	}
+	defer db.Close()
+
+	// Create the `categories` table if it doesn't exist
+	createCategoriesTableSQL := `
+		ATTACH DATABASE ? AS game_data;
+		CREATE TABLE IF NOT EXISTS game_data.categories (
+			category_id TEXT PRIMARY KEY,
+			season_id TEXT NOT NULL,
+			game_id INTEGER NOT NULL,
+			round_name TEXT NOT NULL,
+			category_name TEXT NOT NULL
+		);
+	`
+	if _, err := db.Exec(createCategoriesTableSQL, dbName); err != nil {
+		log.Fatalf("Failed to create categories table: %v", err)
+	}
+
+	// Insert categories into the `categories` table
+	insertCategorySQL := `
+		INSERT OR IGNORE INTO game_data.categories (
+			category_id, season_id, game_id, round_name, category_name
+		) VALUES (?, ?, ?, ?, ?);
+	`
+
+	for _, game := range season.Games {
+		for _, round := range game.Rounds {
+			for _, categoryName := range round.Categories {
+				// Generate a unique random string for the categoryID
+				categoryID := generateRandomString(8)
+
+				_, err := db.Exec(
+					insertCategorySQL,
+					categoryID,
+					season.ID,
+					game.ID,
+					round.Name,
+					categoryName,
+				)
+				if err != nil {
+					log.Fatalf("Failed to insert category into categories table: %v", err)
+				}
+			}
+		}
+	}
+
+	log.Println("Successfully wrote categories data to SQLite database")
 }
 
 func main() {
 	seasonID := "40"
 	seasonHTML := RequestSeason("https://j-archive.com/showseason.php?season=" + seasonID)
 	seasonGameList := GetSeasonGameList(seasonHTML)
-	var seasonData SeasonData
 
+	var seasonData SeasonData
+	seasonData.ID = seasonID // Assign the season ID
 	fmt.Println("Processing Data for the following games in Season "+seasonID+": ", seasonGameList)
 
 	for _, gameID := range seasonGameList {
@@ -234,28 +465,37 @@ func main() {
 		var game GameData = parseGameTableData(gameData)
 		game.ID = gameID
 		seasonData.Games = append(seasonData.Games, game)
-		filePath := fmt.Sprintf("games/game_%d_clues.csv", gameID)
-		writeCluesToCSV(filePath, seasonID, game)
 	}
+	// sampleGames := seasonData.Games[2:9]
+	// for _, game := range sampleGames {
+	// 	for _, contestant := range game.Contestants {
+	// 		fmt.Println(contestant.PlayerID)
+	// 		fmt.Println(contestant.Name)
+	// 		fmt.Println(contestant.Bio)
+	// 	}
+	// }
 
-	// sampleGame := seasonData.Games[len(seasonData.Games)-1]
+	dbName := "jeopardy.db"
+	writeGameList(dbName, seasonData)
+	writeClues(dbName, seasonData)
+	writeContestants(dbName, seasonData)
+	writeCategories(dbName, seasonData)
 
 	fmt.Println("# of games to parse: ", len(seasonGameList))
 	fmt.Println("# of games parsed: ", len(seasonData.Games))
-	// fmt.Println("Game ID: ", sampleGame.ID)
-	// fmt.Println("Contestants:", sampleGame.Contestants)
-	// // Print the Categories and Clues for each round
-	// for _, round := range sampleGame.Rounds {
-	// 	fmt.Println(round.Name)
-	// 	fmt.Println("Categories:", round.Categories)
-	// 	fmt.Println("Clues:")
-	// 	for _, clue := range round.Clues {
-	// 		fmt.Println("---------------------------")
-	// 		fmt.Printf("BoardPosition: %s\n Value: %s\n Order Number %d\n Text: %s\n Correct Response: %s\n",
-	// 			clue.Position, clue.Value, clue.OrderNumber, clue.Text, clue.CorrectResponse)
-	// 		fmt.Println("---------------------------")
-	// 	}
-	// 	fmt.Println("---------------------------")
-	// }
 
 }
+
+//TODO
+// write a unique playerID table (only list each player id, name, nicname, and bio once, remove the needd for extra info in the contestant by game table)
+//add who gave the correct response to the clue struct, will have to edit the html sraping
+//add metadata to game data, what the game # is, the date it was played, etc...
+// write something to generate the order in which the game was played, and the money earned (I might just be able to write a query for this)
+//finalize the tables and data models. add incexes, PKs foreign keys, etc./
+//cleanup the code, can probbaly write one handler and pas in schema to write the tables
+// go-ify the data scraping, run multiple games at once to start, then eventually multiple seasons
+// save html files, if the game file already exists, don't re-pull it, scrape from the locally stored html (so I don't get throttled)
+// run for all seasons
+
+//plug into superset/visualization
+//sentiment analysis on categories

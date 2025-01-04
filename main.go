@@ -11,6 +11,10 @@ import (
 	"strconv"
 	"strings"
 
+	"encoding/json"
+	"sync"
+	"time"
+
 	"github.com/PuerkitoBio/goquery"
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 )
@@ -324,45 +328,232 @@ func RequestGameDataWithCache(gameID int, seasonID string) string {
 	return gameData
 }
 
+// ProcessingState tracks progress for resuming interrupted processing
+type ProcessingState struct {
+	LastCompletedSeason string
+	SeasonProgress      map[string][]int // Maps season ID to completed game IDs
+	FailedGames         map[string][]int // Maps season ID to failed game IDs
+	LastUpdated         time.Time
+}
+
+// saveProcessingState saves current progress to a JSON file
+func saveProcessingState(state ProcessingState, filename string) error {
+	state.LastUpdated = time.Now()
+	data, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filename, data, 0644)
+}
+
+// loadProcessingState loads progress from a JSON file
+func loadProcessingState(filename string) (ProcessingState, error) {
+	var state ProcessingState
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Initialize new state if file doesn't exist
+			return ProcessingState{
+				SeasonProgress: make(map[string][]int),
+				FailedGames:    make(map[string][]int),
+			}, nil
+		}
+		return state, err
+	}
+	err = json.Unmarshal(data, &state)
+	return state, err
+}
+
+// processGame handles a single game with error reporting
+func processGame(gameID int, seasonID string, wg *sync.WaitGroup, results chan<- GameData, errors chan<- error) {
+	defer wg.Done()
+
+	// Recover from panics
+	defer func() {
+		if r := recover(); r != nil {
+			errors <- fmt.Errorf("panic processing game %d in season %s: %v", gameID, seasonID, r)
+		}
+	}()
+
+	gameData := RequestGameDataWithCache(gameID, seasonID)
+	game := parseGameTableData(gameData)
+	game.ID = gameID
+
+	results <- game
+}
+func readSeasonsFile(filename string) ([]string, error) {
+	content, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	// Split content by newlines and filter empty lines
+	var seasons []string
+	for _, season := range strings.Split(string(content), "\n") {
+		if trimmed := strings.TrimSpace(season); trimmed != "" {
+			seasons = append(seasons, trimmed)
+		}
+	}
+	return seasons, nil
+}
+
 func main() {
+	const (
+		stateFile     = "processing_state.json"
+		seasonsFile   = "seasons.txt"
+		maxConcurrent = 5
+		dbName        = "jeopardy.db"
+	)
 
-	seasonListHTML := RequestSeasonList("https://www.j-archive.com/listseasons.php")
-	seasonsList := GetSeasonList(seasonListHTML)
-
-	fmt.Printf("Found %d seasons\n", len(seasonsList))
-	for _, season := range seasonsList {
-		fmt.Printf("Season: %s\n", season)
-	}
-	seasonID := "40"
-	seasonHTML := RequestSeason("https://j-archive.com/showseason.php?season=" + seasonID) // Replace with actual function
-	seasonGameList := GetSeasonGameList(seasonHTML)                                        // Extracts list of game IDs for the season
-
-	var seasonData SeasonData
-	seasonData.ID = seasonID
-	fmt.Println("Processing Data for Season", seasonID)
-
-	for _, gameID := range seasonGameList {
-		gameData := RequestGameDataWithCache(gameID, seasonID)
-		game := parseGameTableData(gameData)
-		game.ID = gameID
-		seasonData.Games = append(seasonData.Games, game)
+	// Load or initialize processing state
+	state, err := loadProcessingState(stateFile)
+	if err != nil {
+		log.Fatalf("Failed to load processing state: %v", err)
 	}
 
-	dbName := "jeopardy.db"
-	writeGameList(dbName, seasonData)
-	writeClues(dbName, seasonData)
-	writeContestants(dbName, seasonData)
-	writeCategories(dbName, seasonData)
+	// Try to read seasons from file first
+	var seasonsList []string
+	if seasons, err := readSeasonsFile(seasonsFile); err == nil {
+		fmt.Printf("Using seasons from %s\n", seasonsFile)
+		seasonsList = seasons
+	} else {
+		if !os.IsNotExist(err) {
+			log.Printf("Error reading %s: %v. Falling back to web scraping.", seasonsFile, err)
+		}
+		// Fall back to getting all seasons from web
+		seasonListHTML := RequestSeasonList("https://www.j-archive.com/listseasons.php")
+		seasonsList = GetSeasonList(seasonListHTML)
+	}
 
-	fmt.Println("Number of games processed:", len(seasonData.Games))
+	fmt.Printf("Found %d seasons to process\n", len(seasonsList))
+
+	// Process each season
+	for _, seasonID := range seasonsList {
+		// Skip if season was already completed
+		if seasonID == state.LastCompletedSeason {
+			continue
+		}
+
+		fmt.Printf("\nProcessing Season: %s\n", seasonID)
+		seasonHTML := RequestSeason("https://j-archive.com/showseason.php?season=" + seasonID)
+		seasonGameList := GetSeasonGameList(seasonHTML)
+		fmt.Printf("Found %d games in Season %s\n", len(seasonGameList), seasonID)
+
+		var seasonData SeasonData
+		seasonData.ID = seasonID
+
+		// Create channels for results and errors
+		results := make(chan GameData, len(seasonGameList))
+		errors := make(chan error, len(seasonGameList))
+
+		// Process games concurrently with worker pool
+		var wg sync.WaitGroup
+		semaphore := make(chan struct{}, maxConcurrent)
+
+		for _, gameID := range seasonGameList {
+			// Skip if game was already processed successfully
+			found := false
+			for _, gameIDInProgress := range state.SeasonProgress[seasonID] {
+				if gameIDInProgress == gameID {
+					found = true
+					break
+				}
+			}
+			if found {
+				fmt.Printf("\rSkipping already processed game %d", gameID)
+				continue
+			}
+
+			wg.Add(1)
+			semaphore <- struct{}{} // Acquire semaphore
+
+			go func(gID int) {
+				processGame(gID, seasonID, &wg, results, errors)
+				<-semaphore // Release semaphore
+			}(gameID)
+		}
+
+		// Start a goroutine to close channels when all games are processed
+		go func() {
+			wg.Wait()
+			close(results)
+			close(errors)
+		}()
+
+		// Collect results and errors
+		var processedGames []GameData
+		var failedGames []int
+
+		// Process results as they come in
+		for game := range results {
+			processedGames = append(processedGames, game)
+			state.SeasonProgress[seasonID] = append(state.SeasonProgress[seasonID], game.ID)
+
+			// Print progress
+			fmt.Printf("\rProcessed %d/%d games", len(processedGames), len(seasonGameList))
+
+			// Save state periodically (every 10 games)
+			if len(processedGames)%10 == 0 {
+				if err := saveProcessingState(state, stateFile); err != nil {
+					log.Printf("\nError saving processing state: %v", err)
+				}
+			}
+		}
+
+		//  TODO:Process any errors
+		// for err := range errors {
+		// 	log.Printf("\nError: %v", err)
+		// 	if gameID := extractGameIDFromError(err); gameID != 0 {
+		// 		failedGames = append(failedGames, gameID)
+		// 	}
+		// }
+
+		seasonData.Games = processedGames
+
+		// Write season data to database if we have processed games
+		if len(seasonData.Games) > 0 {
+			// Wrap database operations in a transaction if possible
+			// if err := writeGameList(dbName, seasonData); err != nil {
+			// 	log.Printf("\nError writing game list: %v", err)
+			// }
+			// if err := writeClues(dbName, seasonData); err != nil {
+			// 	log.Printf("\nError writing clues: %v", err)
+			// }
+			// if err := writeContestants(dbName, seasonData); err != nil {
+			// 	log.Printf("\nError writing contestants: %v", err)
+			// }
+			// if err := writeCategories(dbName, seasonData); err != nil {
+			// 	log.Printf("\nError writing categories: %v", err)
+			// }
+			writeGameList(dbName, seasonData)
+			writeClues(dbName, seasonData)
+			writeContestants(dbName, seasonData)
+			writeCategories(dbName, seasonData)
+		}
+
+		// Update state
+		state.LastCompletedSeason = seasonID
+		state.FailedGames[seasonID] = failedGames
+		if err := saveProcessingState(state, stateFile); err != nil {
+			log.Printf("\nError saving final state for season %s: %v", seasonID, err)
+		}
+
+		fmt.Printf("\nSeason %s: Successfully processed %d games, Failed %d games\n",
+			seasonID, len(processedGames), len(failedGames))
+
+		// Optional delay between seasons to be nice to the server
+		time.Sleep(2 * time.Second)
+	}
+
+	fmt.Println("\nFinished processing all seasons")
 }
 
 //TODO
 // write something to generate the order in which the game was played, and the money earned (I might just be able to write a query for this)
 //finalize the tables and data models. add incexes, PKs foreign keys, etc./
+//add season list table
 //cleanup the code, can probaly write one handler and pas in schema to write the tables
-// go-ify the data scraping, run multiple games at once to start, then eventually multiple seasons
-// run for all seasons
 
 //plug into superset/visualization
 //sentiment analysis on categories
+//cli to generate categories to quiz myself on

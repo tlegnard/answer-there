@@ -121,6 +121,7 @@ func parseGameTableData(gameData string) GameData {
 			htmlText, _ = contestantHtml.Html()
 
 			contestant.Name = contestantHtml.Find("a").Text()
+			contestant.Nickname = strings.Fields(contestant.Name)[0]
 			contestant.PlayerID, _ = extractId(htmlText, "player_id")
 
 			// Filter out text matching contestant.Name

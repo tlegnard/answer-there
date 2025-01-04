@@ -18,13 +18,12 @@ import (
 )
 
 type Clue struct {
-	Position        string
-	Value           string
-	OrderNumber     int
-	Text            string
-	CorrectResponse string
-	// GameID          int
-	// RoundName       int
+	Position          string
+	Value             string
+	OrderNumber       int
+	Text              string
+	CorrectResponse   string
+	CorrectContestant string
 }
 
 // Round struct represents a round of the game
@@ -151,6 +150,10 @@ func parseGameTableData(gameData string) GameData {
 			clue.Text = clueHtml.Find("td.clue_text").First().Text()
 
 			clue.CorrectResponse = clueHtml.Find("td.clue_text em.correct_response").Text()
+			// Extract correct contestant's name
+			clueHtml.Find("td.clue_text table").Each(func(_ int, subTableHtml *goquery.Selection) {
+				clue.CorrectContestant = subTableHtml.Find("td.right").Text()
+			})
 
 			round.Clues = append(round.Clues, clue)
 		})
@@ -290,7 +293,8 @@ func writeClues(dbName string, season SeasonData) {
 			value TEXT,
 			order_number INTEGER,
 			text TEXT NOT NULL,
-			correct_response TEXT
+			correct_response TEXT,
+			correct_contestant TEXT
 		);
 	`
 	if _, err := db.Exec(createSchemaSQL, dbName); err != nil {
@@ -300,8 +304,8 @@ func writeClues(dbName string, season SeasonData) {
 	// Insert clues into the table
 	insertClueSQL := `
 		INSERT INTO game_data.clues (
-			season_id, game_id, round_name, category, position, value, order_number, text, correct_response
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+			season_id, game_id, round_name, category, position, value, order_number, text, correct_response, correct_contestant
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
 
 	for _, game := range season.Games {
@@ -327,6 +331,7 @@ func writeClues(dbName string, season SeasonData) {
 					clue.OrderNumber,
 					clue.Text,
 					clue.CorrectResponse,
+					clue.CorrectContestant,
 				)
 				if err != nil {
 					log.Fatalf("Failed to insert clue into database: %v", err)
@@ -488,7 +493,6 @@ func main() {
 
 //TODO
 // write a unique playerID table (only list each player id, name, nicname, and bio once, remove the needd for extra info in the contestant by game table)
-//add who gave the correct response to the clue struct, will have to edit the html sraping
 //add metadata to game data, what the game # is, the date it was played, etc...
 // write something to generate the order in which the game was played, and the money earned (I might just be able to write a query for this)
 //finalize the tables and data models. add incexes, PKs foreign keys, etc./

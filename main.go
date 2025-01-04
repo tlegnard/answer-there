@@ -8,6 +8,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -493,30 +494,66 @@ func writeCategories(dbName string, season SeasonData) {
 
 	log.Println("Successfully wrote categories data to SQLite database")
 }
+func saveHTMLToFile(directory, filename, content string) error {
+	if err := os.MkdirAll(directory, 0755); err != nil {
+		return fmt.Errorf("failed to create directory %s: %v", directory, err)
+	}
+	filePath := filepath.Join(directory, filename)
+	file, err := os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to create file %s: %v", filePath, err)
+	}
+	defer file.Close()
+	_, err = file.WriteString(content)
+	if err != nil {
+		return fmt.Errorf("failed to write content to file %s: %v", filePath, err)
+	}
+	log.Printf("Saved HTML to %s", filePath)
+	return nil
+}
+
+func loadHTMLFromFile(directory, filename string) (string, error) {
+	filePath := filepath.Join(directory, filename)
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read file %s: %v", filePath, err)
+	}
+	return string(content), nil
+}
+
+func RequestGameDataWithCache(gameID int, seasonID string) string {
+	seasonDir := fmt.Sprintf("data/season_%s", seasonID)
+	filename := fmt.Sprintf("%d_%s_j-archive.html", gameID, seasonID)
+	cachedContent, err := loadHTMLFromFile(seasonDir, filename)
+	if err == nil {
+		log.Printf("Loaded cached game data for game %d from %s", gameID, filename)
+		return cachedContent
+	}
+
+	log.Printf("Fetching game data for game %d from J-Archive", gameID)
+	gameData := RequestGameData(gameID) // Replace with the actual function to fetch game data from the web
+	saveErr := saveHTMLToFile(seasonDir, filename, gameData)
+	if saveErr != nil {
+		log.Printf("Error saving game data: %v", saveErr)
+	}
+	return gameData
+}
 
 func main() {
 	seasonID := "40"
-	seasonHTML := RequestSeason("https://j-archive.com/showseason.php?season=" + seasonID)
-	seasonGameList := GetSeasonGameList(seasonHTML)
+	seasonHTML := RequestSeason("https://j-archive.com/showseason.php?season=" + seasonID) // Replace with actual function
+	seasonGameList := GetSeasonGameList(seasonHTML)                                        // Extracts list of game IDs for the season
 
 	var seasonData SeasonData
-	seasonData.ID = seasonID // Assign the season ID
-	fmt.Println("Processing Data for the following games in Season "+seasonID+": ", seasonGameList)
+	seasonData.ID = seasonID
+	fmt.Println("Processing Data for Season", seasonID)
 
 	for _, gameID := range seasonGameList {
-		gameData := RequestGameData(gameID)
-		var game GameData = parseGameTableData(gameData)
+		gameData := RequestGameDataWithCache(gameID, seasonID)
+		game := parseGameTableData(gameData)
 		game.ID = gameID
 		seasonData.Games = append(seasonData.Games, game)
 	}
-	// sampleGames := seasonData.Games[2:9]
-	// for _, game := range sampleGames {
-	// 	for _, contestant := range game.Contestants {
-	// 		fmt.Println(contestant.PlayerID)
-	// 		fmt.Println(contestant.Name)
-	// 		fmt.Println(contestant.Bio)
-	// 	}
-	// }
 
 	dbName := "jeopardy.db"
 	writeGameList(dbName, seasonData)
@@ -524,19 +561,14 @@ func main() {
 	writeContestants(dbName, seasonData)
 	writeCategories(dbName, seasonData)
 
-	fmt.Println("# of games to parse: ", len(seasonGameList))
-	fmt.Println("# of games parsed: ", len(seasonData.Games))
-
+	fmt.Println("Number of games processed:", len(seasonData.Games))
 }
 
 //TODO
-// write a unique playerID table (only list each player id, name, nicname, and bio once, remove the needd for extra info in the contestant by game table)
-//add metadata to game data, what the game # is, the date it was played, etc...
 // write something to generate the order in which the game was played, and the money earned (I might just be able to write a query for this)
 //finalize the tables and data models. add incexes, PKs foreign keys, etc./
-//cleanup the code, can probbaly write one handler and pas in schema to write the tables
+//cleanup the code, can probaly write one handler and pas in schema to write the tables
 // go-ify the data scraping, run multiple games at once to start, then eventually multiple seasons
-// save html files, if the game file already exists, don't re-pull it, scrape from the locally stored html (so I don't get throttled)
 // run for all seasons
 
 //plug into superset/visualization

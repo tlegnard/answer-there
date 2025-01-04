@@ -46,6 +46,9 @@ type GameData struct {
 	ID          int
 	Rounds      []Round
 	Contestants []Contestant
+	ShowNum     int
+	AirDate     string
+	TapeDate    string
 }
 
 type SeasonData struct {
@@ -91,6 +94,25 @@ func parseGameTableData(gameData string) GameData {
 
 	doc := parseDoc(gameData)
 
+	// Extract show number and air date from title
+	title := doc.Find("title").Text()
+	showNumRegex := regexp.MustCompile(`Show #(\d+)`)
+	airDateRegex := regexp.MustCompile(`aired (\d{4}-\d{2}-\d{2})`)
+	if showNumMatch := showNumRegex.FindStringSubmatch(title); len(showNumMatch) > 1 {
+		game.ShowNum, _ = strconv.Atoi(showNumMatch[1])
+	}
+	if airDateMatch := airDateRegex.FindStringSubmatch(title); len(airDateMatch) > 1 {
+		game.AirDate = airDateMatch[1]
+	}
+
+	// Extract tape date
+	tapeDateRegex := regexp.MustCompile(`Game tape date: (\d{4}-\d{2}-\d{2})`)
+	doc.Find("h6").Each(func(_ int, h6Html *goquery.Selection) {
+		if tapeDateMatch := tapeDateRegex.FindStringSubmatch(h6Html.Text()); len(tapeDateMatch) > 1 {
+			game.TapeDate = tapeDateMatch[1]
+		}
+	})
+
 	// Find contestant table
 	doc.Find("#contestants_table").Each(func(contestantIndex int, contestantTable *goquery.Selection) {
 		contestantTable.Find("p.contestants").Each(func(i int, contestantHtml *goquery.Selection) {
@@ -112,7 +134,6 @@ func parseGameTableData(gameData string) GameData {
 			})
 			game.Contestants = append(game.Contestants, contestant)
 		})
-
 	})
 
 	// Find each round table
@@ -148,8 +169,8 @@ func parseGameTableData(gameData string) GameData {
 			clue.OrderNumber, _ = strconv.Atoi(clueHtml.Find("td.clue_order_number").Text())
 
 			clue.Text = clueHtml.Find("td.clue_text").First().Text()
-
 			clue.CorrectResponse = clueHtml.Find("td.clue_text em.correct_response").Text()
+
 			// Extract correct contestant's name
 			clueHtml.Find("td.clue_text table").Each(func(_ int, subTableHtml *goquery.Selection) {
 				clue.CorrectContestant = subTableHtml.Find("td.right").Text()
@@ -245,7 +266,10 @@ func writeGameList(dbName string, season SeasonData) {
 		CREATE TABLE IF NOT EXISTS game_data.gamelist (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			season_id TEXT NOT NULL,
-			game_id INTEGER NOT NULL UNIQUE
+			game_id INTEGER NOT NULL UNIQUE,
+			show_num INTEGER NOT NULL UNIQUE,
+			air_date DATE NOT NULL,
+			tape_date DATE NOT NULL
 		);
 	`
 	if _, err := db.Exec(createGameListTableSQL, dbName); err != nil {
@@ -255,8 +279,8 @@ func writeGameList(dbName string, season SeasonData) {
 	// Insert games into the `gamelist` table
 	insertGameSQL := `
 		INSERT OR IGNORE INTO game_data.gamelist (
-			season_id, game_id
-		) VALUES (?, ?);
+			season_id, game_id, show_num, air_date, tape_date
+		) VALUES (?, ?, ?, ?, ?);
 	`
 
 	for _, game := range season.Games {
@@ -264,6 +288,9 @@ func writeGameList(dbName string, season SeasonData) {
 			insertGameSQL,
 			season.ID,
 			game.ID,
+			game.ShowNum,
+			game.AirDate,
+			game.TapeDate,
 		)
 		if err != nil {
 			log.Fatalf("Failed to insert game into gamelist table: %v", err)

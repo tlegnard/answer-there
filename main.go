@@ -378,9 +378,9 @@ func writeContestants(dbName string, season SeasonData) {
 	defer db.Close()
 
 	// Create the `contestants` table if it doesn't exist
-	createContestantsTableSQL := `
+	createGameRosterTableSQL := `
 		ATTACH DATABASE ? AS game_data;
-		CREATE TABLE IF NOT EXISTS game_data.contestants (
+		CREATE TABLE IF NOT EXISTS game_data.game_roster (
 			player_id TEXT NOT NULL,
 			season_id TEXT NOT NULL,
 			game_id INTEGER NOT NULL,
@@ -389,13 +389,14 @@ func writeContestants(dbName string, season SeasonData) {
 			bio TEXT
 		);
 	`
-	if _, err := db.Exec(createContestantsTableSQL, dbName); err != nil {
-		log.Fatalf("Failed to create contestants table: %v", err)
+
+	if _, err := db.Exec(createGameRosterTableSQL, dbName); err != nil {
+		log.Fatalf("Failed to create game_roster table: %v", err)
 	}
 
 	// Insert contestants into the `contestants` table
-	insertContestantSQL := `
-		INSERT OR IGNORE INTO game_data.contestants (
+	insertGameRosterSQL := `
+		INSERT OR IGNORE INTO game_data.game_roster (
 			player_id, season_id, game_id, name, nickname, bio
 		) VALUES (?, ?, ?, ?, ?, ?);
 	`
@@ -403,7 +404,7 @@ func writeContestants(dbName string, season SeasonData) {
 	for _, game := range season.Games {
 		for _, contestant := range game.Contestants {
 			_, err := db.Exec(
-				insertContestantSQL,
+				insertGameRosterSQL,
 				contestant.PlayerID,
 				season.ID,
 				game.ID,
@@ -417,7 +418,16 @@ func writeContestants(dbName string, season SeasonData) {
 		}
 	}
 
-	log.Println("Successfully wrote contestants data to SQLite database")
+	// Create or replace the `contestants` view
+	createContestantViewSQL := `
+		DROP VIEW IF EXISTS contestants;
+		CREATE VIEW contestants AS
+		SELECT DISTINCT player_id, name FROM game_roster;
+	`
+	if _, err := db.Exec(createContestantViewSQL); err != nil {
+		log.Fatalf("Failed to create contestants view: %v", err)
+	}
+
 }
 
 func generateRandomString(n int) string {
